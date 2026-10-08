@@ -14,10 +14,10 @@
 - [x] Implementar `toggleReserveGift`
 
 ## Step 3: Components & UI
-- [ ] Crear `GiftCardPublic.tsx`
-- [ ] Crear `GiftCardAdmin.tsx`
-- [ ] Crear `AddGiftForm.tsx`
-- [ ] Crear `ReserveModal.tsx`
+- [x] Crear `GiftCardPublic.tsx`
+- [x] Crear `GiftCardAdmin.tsx`
+- [x] Crear `AddGiftForm.tsx`
+- [x] Crear `ReserveModal.tsx`
 
 ## Step 4: Pages & Flow
 - [ ] Implementar `src/app/[slug]/page.tsx` (Vista amigos)
