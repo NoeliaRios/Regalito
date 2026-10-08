@@ -3,15 +3,15 @@
 ## Step 1: Base & Setup
 - [ ] Inicializar app Next.js (`pnpm create next-app`)
 - [ ] Configurar `.env` con `DATABASE_URL`
-- [ ] Crear `prisma/schema.prisma` y `src/lib/prisma.ts`
+- [x] Crear `prisma/schema.prisma` y `src/lib/prisma.ts`
 - [ ] Ejecutar `npx prisma db push`
 
 ## Step 2: Server Actions
-- [ ] Crear `src/actions/wishlist.ts`
-- [ ] Implementar `getWishlistBySlug`
-- [ ] Implementar `addGift`
-- [ ] Implementar `deleteGift`
-- [ ] Implementar `toggleReserveGift`
+- [x] Crear `src/actions/wishlist.ts`
+- [x] Implementar `getWishlistBySlug`
+- [x] Implementar `addGift`
+- [x] Implementar `deleteGift`
+- [x] Implementar `toggleReserveGift`
 
 ## Step 3: Components & UI
 - [ ] Crear `GiftCardPublic.tsx`

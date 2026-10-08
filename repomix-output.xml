@@ -1,0 +1,824 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+prisma/
+  schema.prisma
+public/
+  file.svg
+  globe.svg
+  next.svg
+  vercel.svg
+  window.svg
+src/
+  actions/
+    wishlist.ts
+  app/
+    favicon.ico
+    globals.css
+    layout.tsx
+    page.tsx
+  lib/
+    prisma.ts
+.clirules
+.gitignore
+AGENTS.md
+ARCH.md
+CLAUDE.md
+eslint.config.mjs
+next.config.ts
+package.json
+PLAN.md
+pnpm-workspace.yaml
+postcss.config.mjs
+README.md
+SPEC.md
+TASKS.md
+tsconfig.json
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="prisma/schema.prisma">
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Wishlist {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  slug        String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  gifts       Gift[]
+}
+
+model Gift {
+  id          String   @id @default(uuid())
+  wishlistId  String
+  wishlist    Wishlist @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  price       Float?
+  buyUrl      String?
+  imageUrl    String?
+  isReserved  Boolean  @default(false)
+  reservedBy  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+</file>
+
+<file path="src/actions/wishlist.ts">
+'use server';
+
+import { prisma } from '@/lib/prisma';
+import { revalidatePath } from 'next/cache';
+import { Wishlist, Gift } from '@prisma/client';
+
+export type WishlistWithGifts = Wishlist & {
+  gifts: Gift[];
+};
+
+export async function getWishlistBySlug(slug: string): Promise<WishlistWithGifts | null> {
+  if (!slug) return null;
+  try {
+    const wishlist = await prisma.wishlist.findUnique({
+      where: { slug },
+      include: {
+        gifts: {
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+    return wishlist;
+  } catch (error) {
+    console.error('Error fetching wishlist by slug:', error);
+    return null;
+  }
+}
+
+export async function addGift(data: {
+  wishlistSlug: string;
+  title: string;
+  description?: string;
+  price?: number;
+  buyUrl?: string;
+  imageUrl?: string;
+}): Promise<{ success: boolean; gift?: Gift; error?: string }> {
+  try {
+    const { wishlistSlug, title, description, price, buyUrl, imageUrl } = data;
+
+    if (!wishlistSlug || !title) {
+      return { success: false, error: 'Wishlist slug and title are required' };
+    }
+
+    const wishlist = await prisma.wishlist.findUnique({
+      where: { slug: wishlistSlug },
+    });
+
+    if (!wishlist) {
+      return { success: false, error: 'Wishlist not found' };
+    }
+
+    const gift = await prisma.gift.create({
+      data: {
+        wishlistId: wishlist.id,
+        title,
+        description: description || null,
+        price: price !== undefined && !isNaN(price) ? Number(price) : null,
+        buyUrl: buyUrl || null,
+        imageUrl: imageUrl || null,
+      },
+    });
+
+    revalidatePath(`/${wishlistSlug}`);
+    revalidatePath(`/admin/${wishlistSlug}`);
+
+    return { success: true, gift };
+  } catch (error: any) {
+    console.error('Error adding gift:', error);
+    return { success: false, error: error.message || 'Failed to add gift' };
+  }
+}
+
+export async function deleteGift(data: {
+  giftId: string;
+  wishlistSlug: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { giftId, wishlistSlug } = data;
+
+    if (!giftId) {
+      return { success: false, error: 'Gift ID is required' };
+    }
+
+    await prisma.gift.delete({
+      where: { id: giftId },
+    });
+
+    if (wishlistSlug) {
+      revalidatePath(`/${wishlistSlug}`);
+      revalidatePath(`/admin/${wishlistSlug}`);
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('Error deleting gift:', error);
+    return { success: false, error: error.message || 'Failed to delete gift' };
+  }
+}
+
+export async function toggleReserveGift(data: {
+  giftId: string;
+  wishlistSlug: string;
+  reservedBy?: string;
+}): Promise<{ success: boolean; isReserved?: boolean; error?: string }> {
+  try {
+    const { giftId, wishlistSlug, reservedBy } = data;
+
+    if (!giftId) {
+      return { success: false, error: 'Gift ID is required' };
+    }
+
+    const gift = await prisma.gift.findUnique({
+      where: { id: giftId },
+    });
+
+    if (!gift) {
+      return { success: false, error: 'Gift not found' };
+    }
+
+    const newIsReserved = !gift.isReserved;
+    const updatedGift = await prisma.gift.update({
+      where: { id: giftId },
+      data: {
+        isReserved: newIsReserved,
+        reservedBy: newIsReserved ? (reservedBy || 'Anónimo') : null,
+      },
+    });
+
+    if (wishlistSlug) {
+      revalidatePath(`/${wishlistSlug}`);
+      revalidatePath(`/admin/${wishlistSlug}`);
+    }
+
+    return { success: true, isReserved: updatedGift.isReserved };
+  } catch (error: any) {
+    console.error('Error toggling reserve gift:', error);
+    return { success: false, error: error.message || 'Failed to toggle reservation' };
+  }
+}
+</file>
+
+<file path="src/lib/prisma.ts">
+import { PrismaClient } from '@prisma/client';
+
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
+
+export const prisma =
+  globalForPrisma.prisma ||
+  new PrismaClient({
+    log: ['query'],
+  });
+
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+</file>
+
+<file path="public/file.svg">
+<svg fill="none" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M14.5 13.5V5.41a1 1 0 0 0-.3-.7L9.8.29A1 1 0 0 0 9.08 0H1.5v13.5A2.5 2.5 0 0 0 4 16h8a2.5 2.5 0 0 0 2.5-2.5m-1.5 0v-7H8v-5H3v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1M9.5 5V2.12L12.38 5zM5.13 5h-.62v1.25h2.12V5zm-.62 3h7.12v1.25H4.5zm.62 3h-.62v1.25h7.12V11z" clip-rule="evenodd" fill="#666" fill-rule="evenodd"/></svg>
+</file>
+
+<file path="public/globe.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><g clip-path="url(#a)"><path fill-rule="evenodd" clip-rule="evenodd" d="M10.27 14.1a6.5 6.5 0 0 0 3.67-3.45q-1.24.21-2.7.34-.31 1.83-.97 3.1M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m.48-1.52a7 7 0 0 1-.96 0H7.5a4 4 0 0 1-.84-1.32q-.38-.89-.63-2.08a40 40 0 0 0 3.92 0q-.25 1.2-.63 2.08a4 4 0 0 1-.84 1.31zm2.94-4.76q1.66-.15 2.95-.43a7 7 0 0 0 0-2.58q-1.3-.27-2.95-.43a18 18 0 0 1 0 3.44m-1.27-3.54a17 17 0 0 1 0 3.64 39 39 0 0 1-4.3 0 17 17 0 0 1 0-3.64 39 39 0 0 1 4.3 0m1.1-1.17q1.45.13 2.69.34a6.5 6.5 0 0 0-3.67-3.44q.65 1.26.98 3.1M8.48 1.5l.01.02q.41.37.84 1.31.38.89.63 2.08a40 40 0 0 0-3.92 0q.25-1.2.63-2.08a4 4 0 0 1 .85-1.32 7 7 0 0 1 .96 0m-2.75.4a6.5 6.5 0 0 0-3.67 3.44 29 29 0 0 1 2.7-.34q.31-1.83.97-3.1M4.58 6.28q-1.66.16-2.95.43a7 7 0 0 0 0 2.58q1.3.27 2.95.43a18 18 0 0 1 0-3.44m.17 4.71q-1.45-.12-2.69-.34a6.5 6.5 0 0 0 3.67 3.44q-.65-1.27-.98-3.1" fill="#666"/></g><defs><clipPath id="a"><path fill="#fff" d="M0 0h16v16H0z"/></clipPath></defs></svg>
+</file>
+
+<file path="public/next.svg">
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 394 80"><path fill="#000" d="M262 0h68.5v12.7h-27.2v66.6h-13.6V12.7H262V0ZM149 0v12.7H94v20.4h44.3v12.6H94v21h55v12.6H80.5V0h68.7zm34.3 0h-17.8l63.8 79.4h17.9l-32-39.7 32-39.6h-17.9l-23 28.6-23-28.6zm18.3 56.7-9-11-27.1 33.7h17.8l18.3-22.7z"/><path fill="#000" d="M81 79.3 17 0H0v79.3h13.6V17l50.2 62.3H81Zm252.6-.4c-1 0-1.8-.4-2.5-1s-1.1-1.6-1.1-2.6.3-1.8 1-2.5 1.6-1 2.6-1 1.8.3 2.5 1a3.4 3.4 0 0 1 .6 4.3 3.7 3.7 0 0 1-3 1.8zm23.2-33.5h6v23.3c0 2.1-.4 4-1.3 5.5a9.1 9.1 0 0 1-3.8 3.5c-1.6.8-3.5 1.3-5.7 1.3-2 0-3.7-.4-5.3-1s-2.8-1.8-3.7-3.2c-.9-1.3-1.4-3-1.4-5h6c.1.8.3 1.6.7 2.2s1 1.2 1.6 1.5c.7.4 1.5.5 2.4.5 1 0 1.8-.2 2.4-.6a4 4 0 0 0 1.6-1.8c.3-.8.5-1.8.5-3V45.5zm30.9 9.1a4.4 4.4 0 0 0-2-3.3 7.5 7.5 0 0 0-4.3-1.1c-1.3 0-2.4.2-3.3.5-.9.4-1.6 1-2 1.6a3.5 3.5 0 0 0-.3 4c.3.5.7.9 1.3 1.2l1.8 1 2 .5 3.2.8c1.3.3 2.5.7 3.7 1.2a13 13 0 0 1 3.2 1.8 8.1 8.1 0 0 1 3 6.5c0 2-.5 3.7-1.5 5.1a10 10 0 0 1-4.4 3.5c-1.8.8-4.1 1.2-6.8 1.2-2.6 0-4.9-.4-6.8-1.2-2-.8-3.4-2-4.5-3.5a10 10 0 0 1-1.7-5.6h6a5 5 0 0 0 3.5 4.6c1 .4 2.2.6 3.4.6 1.3 0 2.5-.2 3.5-.6 1-.4 1.8-1 2.4-1.7a4 4 0 0 0 .8-2.4c0-.9-.2-1.6-.7-2.2a11 11 0 0 0-2.1-1.4l-3.2-1-3.8-1c-2.8-.7-5-1.7-6.6-3.2a7.2 7.2 0 0 1-2.4-5.7 8 8 0 0 1 1.7-5 10 10 0 0 1 4.3-3.5c2-.8 4-1.2 6.4-1.2 2.3 0 4.4.4 6.2 1.2 1.8.8 3.2 2 4.3 3.4 1 1.4 1.5 3 1.5 5h-5.8z"/></svg>
+</file>
+
+<file path="public/vercel.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1155 1000"><path d="m577.3 0 577.4 1000H0z" fill="#fff"/></svg>
+</file>
+
+<file path="public/window.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill-rule="evenodd" clip-rule="evenodd" d="M1.5 2.5h13v10a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1zM0 1h16v11.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 0 12.5zm3.75 4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5M7 4.75a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0m1.75.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5" fill="#666"/></svg>
+</file>
+
+<file path="src/app/globals.css">
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+</file>
+
+<file path="src/app/layout.tsx">
+import type { Metadata } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
+import "./globals.css";
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
+export const metadata: Metadata = {
+  title: "Create Next App",
+  description: "Generated by create next app",
+};
+
+export default function RootLayout({ children }: LayoutProps<"/">) {
+  return (
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+    >
+      <body className="min-h-full flex flex-col">{children}</body>
+    </html>
+  );
+}
+</file>
+
+<file path="src/app/page.tsx">
+import Image from "next/image";
+
+export default function Home() {
+  return (
+    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
+      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
+        <Image
+          className="dark:invert h-5 w-[100px]"
+          src="/next.svg"
+          alt="Next.js logo"
+          width={100}
+          height={20}
+          priority
+        />
+        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
+          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
+            To get started, edit the{" "}
+            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
+              page.tsx
+            </code>{" "}
+            file.
+          </h1>
+          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
+            Looking for a starting point or more instructions? Head over to{" "}
+            <a
+              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+              className="font-medium text-zinc-950 dark:text-zinc-50"
+            >
+              Templates
+            </a>{" "}
+            or the{" "}
+            <a
+              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+              className="font-medium text-zinc-950 dark:text-zinc-50"
+            >
+              Learning
+            </a>{" "}
+            center.
+          </p>
+        </div>
+        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
+          <a
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
+            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Image
+              className="dark:invert h-[14px] w-4"
+              src="/vercel.svg"
+              alt="Vercel logomark"
+              width={16}
+              height={14}
+            />
+            Deploy Now
+          </a>
+          <a
+            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
+            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Documentation
+          </a>
+        </div>
+      </main>
+    </div>
+  );
+}
+</file>
+
+<file path=".clirules">
+Stack: Next.js (App Router), TypeScript, Tailwind CSS, Prisma, PostgreSQL.
+Package Manager: pnpm.
+Rules:
+- Escribir código limpio y fuertemente tipado.
+- No modificar esquemas de datos sin avisar.
+- Usar Server Actions para la comunicación con la DB.
+</file>
+
+<file path=".gitignore">
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+</file>
+
+<file path="AGENTS.md">
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
+</file>
+
+<file path="ARCH.md">
+# Total Architecture Overview
+
+## 1. Topology (Fullstack Monolith)
+- Monolito desplegado en Vercel.
+- API Layer mediante Next.js Server Actions (comunicación directa con la DB, cero problemas de CORS).
+- DB relacional albergada en PostgreSQL (Supabase / Neon).
+
+## 2. Directory Structure
+
+wishlist-app/
+├── .clirules
+├── SPEC.md
+├── ARCH.md
+├── PLAN.md
+├── TASKS.md
+├── prisma/
+│   └── schema.prisma
+├── src/
+│   ├── app/
+│   │   ├── layout.tsx
+│   │   ├── page.tsx                       # Home / Redirección o landing básica
+│   │   ├── [slug]/                        # Vista pública para amigos (Reservar)
+│   │   │   └── page.tsx
+│   │   └── admin/[slug]/                  # Vista de administración (Crear / Borrar)
+│   │       └── page.tsx
+│   ├── actions/                           # Next.js Server Actions
+│   │   └── wishlist.ts
+│   ├── components/
+│   │   ├── GiftCardPublic.tsx             # Tarjeta con botón de reserva
+│   │   ├── GiftCardAdmin.tsx              # Tarjeta con botón de eliminar
+│   │   ├── AddGiftModal.tsx               # Formulario/Modal para agregar regalo
+│   │   └── ReserveModal.tsx               # Modal opcional para pedir nombre al reservar
+│   └── lib/
+│       └── prisma.ts                      # Client Singleton de Prisma
+</file>
+
+<file path="CLAUDE.md">
+@AGENTS.md
+</file>
+
+<file path="eslint.config.mjs">
+import { defineConfig, globalIgnores } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTs from "eslint-config-next/typescript";
+
+const eslintConfig = defineConfig([
+  ...nextVitals,
+  ...nextTs,
+  // Override default ignores of eslint-config-next.
+  globalIgnores([
+    // Default ignores of eslint-config-next:
+    ".next/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+  ]),
+]);
+
+export default eslintConfig;
+</file>
+
+<file path="next.config.ts">
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  /* config options here */
+};
+
+export default nextConfig;
+</file>
+
+<file path="package.json">
+{
+  "name": "regalito",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@prisma/client": "^7.10.0",
+    "next": "16.3.8",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.8",
+    "prisma": "8.0.0-rc.20",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  },
+  "packageManager": "pnpm@12.4.2"
+}
+</file>
+
+<file path="PLAN.md">
+# Implementation Plan (MVP en 1 Día)
+
+## Fase 1: Setup & Data Layer
+1. Inicializar proyecto Next.js con Tailwind y TypeScript via pnpm.
+2. Configurar Prisma, schema.prisma y conexión a PostgreSQL (Supabase/Neon).
+3. Crear el singleton `src/lib/prisma.ts`.
+4. Ejecutar `npx prisma db push` y popular datos iniciales (seed o manual).
+
+## Fase 2: Backend Logic (Server Actions)
+1. Definir los tipos de datos en TypeScript.
+2. Implementar las Server Actions en `src/actions/wishlist.ts` usando `revalidatePath` para actualizaciones instantáneas.
+
+## Fase 3: UI & Components (Mobile First)
+1. Crear el layout global con estética limpia y moderna.
+2. Crear componentes `GiftCardPublic` (estado disponible vs. reservado).
+3. Crear formulario `AddGiftModal` / `AddGiftForm` para ingresar: Título, Link, Precio, Imagen y Notas.
+4. Crear componente `ReserveModal` para capturar opcionalmente el nombre del amigo.
+
+## Fase 4: Routing & Vistas
+1. Armar página pública `src/app/[slug]/page.tsx`.
+2. Armar página admin `src/app/admin/[slug]/page.tsx`.
+
+## Fase 5: Testing & Deployment
+1. Probar flujo end-to-end de creación, borrado y reserva.
+2. Desplegar en Vercel y configurar variables de entorno (`DATABASE_URL`).
+</file>
+
+<file path="pnpm-workspace.yaml">
+allowBuilds:
+  esbuild: set this to true or false
+  sharp: false
+  unrs-resolver: false
+  workerd: set this to true or false
+</file>
+
+<file path="postcss.config.mjs">
+const config = {
+  plugins: {
+    "@tailwindcss/postcss": {},
+  },
+};
+
+export default config;
+</file>
+
+<file path="README.md">
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+
+## Getting Started
+
+First, run the development server:
+
+```bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+
+## Learn More
+
+To learn more about Next.js, take a look at the following resources:
+
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+
+## Deploy on Vercel
+
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+</file>
+
+<file path="SPEC.md">
+# Specification: Birthday Wishlist MVP
+
+## 1. Goal
+Construir una web app rápida e intuitiva para compartir una lista de deseos de cumpleaños donde:
+- El/la creador/a gestiona la lista (agregar, borrar regalos).
+- Amigos/invitados acceden vía URL única, ven los regalos y los reservan en tiempo real para evitar compras duplicadas.
+
+## 2. Technical Stack
+- Framework: Next.js (App Router, TypeScript)
+- UI / Styling: Tailwind CSS, Lucide Icons
+- DB & ORM: PostgreSQL + Prisma ORM
+- Deployment: Vercel
+
+## 3. Data Schema (Prisma)
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Wishlist {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  slug        String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  gifts       Gift[]
+}
+
+model Gift {
+  id          String   @id @default(uuid())
+  wishlistId  String
+  wishlist    Wishlist @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  price       Float?
+  buyUrl      String?
+  imageUrl    String?
+  isReserved  Boolean  @default(false)
+  reservedBy  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+## 4. Contracts & Server Actions (src/actions/wishlist.ts)
+
+### getWishlistBySlug
+- Input: `slug: string`
+- Description: Devuelve la Wishlist correspondiente al slug junto con sus regalos asociados ordenados por fecha de creación descendente (`createdAt: 'desc'`).
+- Return: `Promise<WishlistWithGifts | null>`
+
+### addGift
+- Input: `{ wishlistSlug: string, title: string, description?: string, price?: number, buyUrl?: string, imageUrl?: string }`
+- Description: Busca la wishlist por el slug y crea un nuevo registro `Gift` en la DB. Llama a `revalidatePath('/[slug]')` y `revalidatePath('/admin/[slug]')`.
+- Return: `Promise<{ success: boolean, gift?: Gift, error?: string }>`
+
+### deleteGift
+- Input: `{ giftId: string, wishlistSlug: string }`
+- Description: Elimina el registro `Gift` por su ID. Llama a `revalidatePath` para actualizar las vistas públicas y de admin.
+- Return: `Promise<{ success: boolean, error?: string }>`
+
+### toggleReserveGift
+- Input: `{ giftId: string, wishlistSlug: string, reservedBy?: string }`
+- Description: Consulta el estado actual de `isReserved`. Si está `false`, lo pasa a `true` y guarda `reservedBy`. Si ya estaba `true`, lo pasa a `false` y limpia `reservedBy`. Llama a `revalidatePath`.
+- Return: `Promise<{ success: boolean, isReserved: boolean, error?: string }>`
+</file>
+
+<file path="TASKS.md">
+# MVP Tasks Tracker
+
+## Step 1: Base & Setup
+- [ ] Inicializar app Next.js (`pnpm create next-app`)
+- [ ] Configurar `.env` con `DATABASE_URL`
+- [x] Crear `prisma/schema.prisma` y `src/lib/prisma.ts`
+- [ ] Ejecutar `npx prisma db push`
+
+## Step 2: Server Actions
+- [x] Crear `src/actions/wishlist.ts`
+- [x] Implementar `getWishlistBySlug`
+- [x] Implementar `addGift`
+- [x] Implementar `deleteGift`
+- [x] Implementar `toggleReserveGift`
+
+## Step 3: Components & UI
+- [ ] Crear `GiftCardPublic.tsx`
+- [ ] Crear `GiftCardAdmin.tsx`
+- [ ] Crear `AddGiftForm.tsx`
+- [ ] Crear `ReserveModal.tsx`
+
+## Step 4: Pages & Flow
+- [ ] Implementar `src/app/[slug]/page.tsx` (Vista amigos)
+- [ ] Implementar `src/app/admin/[slug]/page.tsx` (Vista creador)
+- [ ] Probar reservas en vivo y persistencia
+
+## Step 5: Deploy
+- [ ] Subir a GitHub
+- [ ] Conectar con Vercel
+- [ ] Cargar `DATABASE_URL` en Vercel
+- [ ] Verificar deploy y probar URL pública
+</file>
+
+<file path="tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules"]
+}
+</file>
+
+</files>
